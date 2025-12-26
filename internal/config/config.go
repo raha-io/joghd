@@ -8,16 +8,17 @@ import (
 	"github.com/knadh/koanf/parsers/toml"
 	"github.com/knadh/koanf/providers/env"
 	"github.com/knadh/koanf/providers/file"
+	"github.com/knadh/koanf/providers/structs"
 	"github.com/knadh/koanf/v2"
 	"github.com/raha-io/joghd/internal/domain"
 )
 
 // Config holds all application configuration.
 type Config struct {
-	App      AppConfig      `koanf:"app"`
-	HTTP     HTTPConfig     `koanf:"http"`
-	Retry    RetryConfig    `koanf:"retry"`
-	Alerters AlertersConfig `koanf:"alerters"`
+	App      AppConfig       `koanf:"app"`
+	HTTP     HTTPConfig      `koanf:"http"`
+	Retry    RetryConfig     `koanf:"retry"`
+	Alerters AlertersConfig  `koanf:"alerters"`
 	Targets  []domain.Target `koanf:"targets"`
 }
 
@@ -55,31 +56,14 @@ type TelegramConfig struct {
 	ChatID   string `koanf:"chat_id"`
 }
 
-// defaults returns a koanf instance with default values.
-func defaults() *koanf.Koanf {
-	k := koanf.New(".")
-
-	_ = k.Set("app.mode", "oneshot")
-	_ = k.Set("app.log_level", "info")
-	_ = k.Set("app.concurrency", 10)
-
-	_ = k.Set("http.timeout", "10s")
-	_ = k.Set("http.user_agent", "Joghd/1.0")
-	_ = k.Set("http.skip_tls_verification", false)
-
-	_ = k.Set("retry.max_attempts", 3)
-	_ = k.Set("retry.initial_wait", "1s")
-	_ = k.Set("retry.max_wait", "10s")
-	_ = k.Set("retry.multiplier", 2.0)
-
-	_ = k.Set("alerters.telegram.enabled", false)
-
-	return k
-}
-
 // Load loads configuration from file and environment variables.
 func Load(configPath string) (*Config, error) {
-	k := defaults()
+	k := koanf.New(".")
+
+	// Load defaults from struct
+	if err := k.Load(structs.Provider(Default(), "koanf"), nil); err != nil {
+		return nil, fmt.Errorf("loading defaults: %w", err)
+	}
 
 	// Load from TOML file if path is provided
 	if configPath != "" {
@@ -89,15 +73,13 @@ func Load(configPath string) (*Config, error) {
 	}
 
 	// Load from environment variables (JOGHD_ prefix)
-	err := k.Load(env.Provider("JOGHD_", ".", func(s string) string {
-		return strings.Replace(
+	if err := k.Load(env.Provider("JOGHD_", ".", func(s string) string {
+		return strings.ReplaceAll(
 			strings.ToLower(strings.TrimPrefix(s, "JOGHD_")),
 			"_",
 			".",
-			-1,
 		)
-	}), nil)
-	if err != nil {
+	}), nil); err != nil {
 		return nil, fmt.Errorf("loading env config: %w", err)
 	}
 
