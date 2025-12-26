@@ -13,9 +13,9 @@ import (
 
 // Scheduler manages periodic health checks for multiple targets.
 type Scheduler struct {
-	checker  checker.Checker
-	alerter  alerter.Alerter
-	targets  []domain.Target
+	checker checker.Checker
+	alerter alerter.Alerter
+	targets []domain.Target
 
 	mu     sync.RWMutex
 	states map[string]domain.HealthStatus // target URL -> health status

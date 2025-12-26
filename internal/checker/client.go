@@ -5,8 +5,8 @@ import (
 	"crypto/tls"
 	"time"
 
-	"resty.dev/v3"
 	"github.com/raha-io/joghd/internal/config"
+	"resty.dev/v3"
 )
 
 // HTTPClient abstracts HTTP operations for testability.

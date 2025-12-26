@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"time"
 
-	"resty.dev/v3"
 	"github.com/raha-io/joghd/internal/config"
 	"github.com/raha-io/joghd/internal/domain"
+	"resty.dev/v3"
 )
 
 const telegramAPIURL = "https://api.telegram.org"
