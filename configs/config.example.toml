@@ -1,0 +1,59 @@
+# Joghd Configuration Example
+# Copy this file to config.toml and customize as needed
+
+[app]
+# Run mode: "oneshot" (check once and exit) or "continuous" (persistent monitoring)
+mode = "continuous"
+# Log level: debug, info, warn, error
+log_level = "info"
+# Maximum concurrent health checks
+concurrency = 10
+
+[http]
+# Default request timeout
+timeout = "10s"
+# User-Agent header for requests
+user_agent = "Joghd/1.0"
+# Skip TLS certificate verification (for self-signed certs)
+skip_tls_verification = false
+
+[retry]
+# Maximum retry attempts before declaring failure
+max_attempts = 3
+# Initial wait time between retries
+initial_wait = "1s"
+# Maximum wait time between retries
+max_wait = "10s"
+# Multiplier for exponential backoff
+multiplier = 2.0
+
+[alerters.telegram]
+# Enable Telegram alerts
+enabled = true
+# Telegram Bot API token (recommended: set via JOGHD_ALERTERS_TELEGRAM_BOT_TOKEN)
+# bot_token = "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11"
+# Telegram Chat ID (recommended: set via JOGHD_ALERTERS_TELEGRAM_CHAT_ID)
+# chat_id = "-1001234567890"
+
+# Define targets to monitor
+# Each target is defined as [[targets]]
+
+[[targets]]
+name = "Example API Health"
+url = "https://httpstat.us/200"
+expected_status = 200
+method = "GET"
+# Check interval (for continuous mode)
+interval = "30s"
+# Optional: per-target timeout override
+# timeout = "5s"
+
+[[targets]]
+name = "Example API with Headers"
+url = "https://httpstat.us/200"
+expected_status = 200
+method = "GET"
+interval = "1m"
+[targets.headers]
+Authorization = "Bearer your-token-here"
+X-Custom-Header = "custom-value"
