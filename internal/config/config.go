@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/knadh/koanf/parsers/toml"
-	"github.com/knadh/koanf/providers/env"
+	"github.com/knadh/koanf/providers/env/v2"
 	"github.com/knadh/koanf/providers/file"
 	"github.com/knadh/koanf/providers/structs"
 	"github.com/knadh/koanf/v2"
@@ -73,12 +73,11 @@ func Load(configPath string) (*Config, error) {
 	}
 
 	// Load from environment variables (JOGHD_ prefix)
-	if err := k.Load(env.Provider("JOGHD_", ".", func(s string) string {
-		return strings.ReplaceAll(
-			strings.ToLower(strings.TrimPrefix(s, "JOGHD_")),
-			"_",
-			".",
-		)
+	if err := k.Load(env.Provider(".", env.Opt{
+		Prefix: "JOGHD_",
+		TransformFunc: func(key, value string) (string, any) {
+			return strings.ReplaceAll(strings.ToLower(key), "_", "."), value
+		},
 	}), nil); err != nil {
 		return nil, fmt.Errorf("loading env config: %w", err)
 	}
