@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
@@ -15,10 +16,22 @@ import (
 	"github.com/raha-io/joghd/internal/scheduler"
 )
 
+var (
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
+)
+
 func main() {
 	configPath := flag.String("config", "config.toml", "Path to configuration file")
 	mode := flag.String("mode", "", "Run mode: oneshot or continuous (overrides config)")
+	showVersion := flag.Bool("version", false, "Show version information")
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Printf("joghd %s (commit: %s, built: %s)\n", version, commit, date)
+		os.Exit(0)
+	}
 
 	cfg, err := config.Load(*configPath)
 	if err != nil {

@@ -1,0 +1,80 @@
+version: 2
+
+project_name: joghd
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: joghd
+    main: ./cmd/joghd
+    binary: joghd
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
+
+archives:
+  - id: default
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - README.md
+      - LICENSE
+      - configs/config.example.toml
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "^ci:"
+
+nfpms:
+  - id: packages
+    package_name: joghd
+    vendor: raha-io
+    homepage: https://github.com/raha-io/joghd
+    maintainer: Parham Alvani <parham.alvani@gmail.com>
+    description: URL health check service with Telegram alerts
+    license: GPL-3.0
+    formats:
+      - deb
+      - rpm
+      - apk
+    bindir: /usr/bin
+    contents:
+      - src: configs/config.example.toml
+        dst: /etc/joghd/config.example.toml
+        type: config
+    scripts:
+      postinstall: scripts/postinstall.sh
+
+release:
+  github:
+    owner: raha-io
+    name: joghd
+  draft: false
+  prerelease: auto
+  name_template: "v{{.Version}}"
