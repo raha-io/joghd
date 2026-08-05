@@ -52,12 +52,12 @@ go build ./cmd/joghd
 
 ### Flags
 
-| Flag       | Default       | Description                                       |
-| ---------- | ------------- | ------------------------------------------------- |
-| `-config`  | `config.toml` | Path to the configuration file                    |
-| `-mode`    | from config   | `oneshot` or `continuous`, overrides `app.mode`    |
-| `-quiet`   | `false`       | Suppress the startup banner (useful under cron)   |
-| `-version` | `false`       | Print version information and exit                |
+| Flag       | Default       | Description                                     |
+| ---------- | ------------- | ----------------------------------------------- |
+| `-config`  | `config.toml` | Path to the configuration file                  |
+| `-mode`    | from config   | `oneshot` or `continuous`, overrides `app.mode` |
+| `-quiet`   | `false`       | Suppress the startup banner (useful under cron) |
+| `-version` | `false`       | Print version information and exit              |
 
 Configuration is validated at startup: an invalid mode, a non-positive
 concurrency, retry or interval value, or an enabled alerter missing its
@@ -129,13 +129,13 @@ Authorization = "Bearer token"
 
 Environment variables override config file values (prefix: `JOGHD_`):
 
-| Variable                                  | Description                                                   |
-| ----------------------------------------- | ------------------------------------------------------------- |
-| `JOGHD_APP__MODE`                         | Run mode (`oneshot` or `continuous`)                          |
-| `JOGHD_APP__LOG_LEVEL`                    | Log level (`debug`, `info`, `warn`, `error`)                   |
-| `JOGHD_HTTP__TIMEOUT`                     | Default HTTP timeout                                          |
-| `JOGHD_ALERTERS__<NAME>__BOT_TOKEN`       | Telegram bot token for instance `<name>` (double underscores) |
-| `JOGHD_ALERTERS__<NAME>__CHAT_ID`         | Telegram chat ID for instance `<name>`                        |
-| `JOGHD_ALERTERS__<NAME>__WEBHOOK_URL`     | Mattermost incoming webhook URL for instance `<name>`         |
+| Variable                              | Description                                                   |
+| ------------------------------------- | ------------------------------------------------------------- |
+| `JOGHD_APP__MODE`                     | Run mode (`oneshot` or `continuous`)                          |
+| `JOGHD_APP__LOG_LEVEL`                | Log level (`debug`, `info`, `warn`, `error`)                  |
+| `JOGHD_HTTP__TIMEOUT`                 | Default HTTP timeout                                          |
+| `JOGHD_ALERTERS__<NAME>__BOT_TOKEN`   | Telegram bot token for instance `<name>` (double underscores) |
+| `JOGHD_ALERTERS__<NAME>__CHAT_ID`     | Telegram chat ID for instance `<name>`                        |
+| `JOGHD_ALERTERS__<NAME>__WEBHOOK_URL` | Mattermost incoming webhook URL for instance `<name>`         |
 
 Env variables use `__` (double underscore) to separate structural levels, matching the koanf provider — e.g. `JOGHD_ALERTERS__RAHACLOUD__BOT_TOKEN` overrides `alerters.rahacloud.bot_token`.
