@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"strings"
 
 	"github.com/pterm/pterm"
 	"go.uber.org/fx"
@@ -50,13 +49,18 @@ func printBanner() {
 func main() {
 	configPath := flag.String("config", "config.toml", "Path to configuration file")
 	mode := flag.String("mode", "", "Run mode: oneshot or continuous (overrides config)")
-	showVersion := flag.Bool("version", false, "Show version information")
+	quiet := flag.Bool("quiet", false, "Suppress the startup banner")
+	showVersion := flag.Bool("version", false, "Show version information and exit")
 	flag.Parse()
 
-	printBanner()
-
 	if *showVersion {
-		os.Exit(0)
+		fmt.Printf("joghd %s (commit: %s, built: %s)\n", version, commit, date)
+
+		return
+	}
+
+	if !*quiet {
+		printBanner()
 	}
 
 	app := fx.New(
@@ -68,6 +72,7 @@ func main() {
 		fx.WithLogger(func(log *slog.Logger) fxevent.Logger {
 			l := &fxevent.SlogLogger{Logger: log}
 			l.UseLogLevel(slog.LevelDebug)
+
 			return l
 		}),
 
@@ -77,7 +82,7 @@ func main() {
 
 		fx.Module("checker",
 			fx.Provide(
-				fx.Annotate(checker.NewRestyClient, fx.As(new(checker.HTTPClient))),
+				provideHTTPClient,
 				provideChecker,
 			),
 		),
@@ -91,7 +96,6 @@ func main() {
 		),
 
 		fx.Provide(provideLogger),
-		fx.Invoke(validateTargets),
 		fx.Invoke(registerRunner),
 	)
 
@@ -99,18 +103,8 @@ func main() {
 }
 
 func provideLogger(appCfg config.AppConfig) *slog.Logger {
-	var logLevel slog.Level
-
-	switch strings.ToLower(appCfg.LogLevel) {
-	case "debug":
-		logLevel = slog.LevelDebug
-	case "warn":
-		logLevel = slog.LevelWarn
-	case "error":
-		logLevel = slog.LevelError
-	default:
-		logLevel = slog.LevelInfo
-	}
+	// Configuration validation guarantees the level parses.
+	logLevel, _ := config.ParseLogLevel(appCfg.LogLevel)
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 		Level: logLevel,
@@ -118,6 +112,20 @@ func provideLogger(appCfg config.AppConfig) *slog.Logger {
 	slog.SetDefault(logger)
 
 	return logger
+}
+
+// provideHTTPClient builds the shared HTTP client and ties its connection pool
+// to the application lifecycle.
+func provideHTTPClient(lc fx.Lifecycle, httpCfg config.HTTPConfig) checker.HTTPClient {
+	client := checker.NewRestyClient(httpCfg)
+
+	lc.Append(fx.Hook{
+		OnStop: func(_ context.Context) error {
+			return client.Close()
+		},
+	})
+
+	return client
 }
 
 func provideChecker(client checker.HTTPClient, retryCfg config.RetryConfig, appCfg config.AppConfig) checker.Checker {
@@ -130,6 +138,8 @@ func provideChecker(client checker.HTTPClient, retryCfg config.RetryConfig, appC
 
 func provideAlerter(alerters map[string]config.AlerterConfig) (alerter.Alerter, error) {
 	composite := alerter.NewCompositeAlerter()
+
+	enabled := 0
 
 	for name, a := range alerters {
 		if !a.Enabled {
@@ -147,18 +157,16 @@ func provideAlerter(alerters map[string]config.AlerterConfig) (alerter.Alerter, 
 		}
 
 		composite.Add(alerter.NewCompanyFilter(inner, a.Companies))
+		enabled++
+
 		slog.Info("Alerter enabled", "name", name, "type", a.Type, "companies", a.Companies)
 	}
 
-	return composite, nil
-}
-
-func validateTargets(targets []domain.Target) error {
-	if len(targets) == 0 {
-		return fmt.Errorf("no targets configured")
+	if enabled == 0 {
+		slog.Warn("No alerters are enabled; health check failures will only be logged")
 	}
 
-	return nil
+	return composite, nil
 }
 
 func registerRunner(
@@ -169,50 +177,57 @@ func registerRunner(
 	alt alerter.Alerter,
 	targets []domain.Target,
 	sched *scheduler.Scheduler,
-) {
+) error {
 	slog.Info("Joghd starting", "mode", appCfg.Mode, "targets", len(targets))
 
 	switch appCfg.Mode {
-	case "oneshot":
-		lc.Append(fx.Hook{
-			OnStart: func(ctx context.Context) error {
-				go func() {
-					exitCode := runOneshot(context.Background(), chk, alt, targets)
+	case config.ModeOneshot:
+		appendCancellableHook(lc, func(ctx context.Context) {
+			exitCode := runOneshot(ctx, chk, alt, targets)
 
-					if err := shutdowner.Shutdown(fx.ExitCode(exitCode)); err != nil {
-						slog.Error("Failed to trigger shutdown", "error", err)
-					}
-				}()
-
-				return nil
-			},
+			if err := shutdowner.Shutdown(fx.ExitCode(exitCode)); err != nil {
+				slog.Error("Failed to trigger shutdown", "error", err)
+			}
 		})
-	case "continuous":
-		var cancel context.CancelFunc
+	case config.ModeContinuous:
+		appendCancellableHook(lc, func(ctx context.Context) {
+			slog.Info("Starting continuous monitoring...")
 
-		lc.Append(fx.Hook{
-			OnStart: func(_ context.Context) error {
-				ctx, c := context.WithCancel(context.Background())
-				cancel = c
-
-				go func() {
-					slog.Info("Starting continuous monitoring...")
-
-					if err := sched.Start(ctx); err != nil {
-						slog.Error("Scheduler error", "error", err)
-					}
-				}()
-
-				return nil
-			},
-			OnStop: func(_ context.Context) error {
-				slog.Info("Stopping continuous monitoring...")
-				cancel()
-
-				return nil
-			},
+			if err := sched.Start(ctx); err != nil {
+				slog.Error("Scheduler error", "error", err)
+			}
 		})
+	default:
+		return fmt.Errorf("unsupported app.mode %q", appCfg.Mode)
 	}
+
+	return nil
+}
+
+// appendCancellableHook runs fn in the background on start and cancels its
+// context on stop, so an interrupt aborts in-flight work instead of being
+// ignored.
+func appendCancellableHook(lc fx.Lifecycle, fn func(ctx context.Context)) {
+	var cancel context.CancelFunc
+
+	lc.Append(fx.Hook{
+		OnStart: func(_ context.Context) error {
+			//nolint:gosec // cancel is retained and invoked by the OnStop hook
+			ctx, c := context.WithCancel(context.Background())
+			cancel = c
+
+			go fn(ctx)
+
+			return nil
+		},
+		OnStop: func(_ context.Context) error {
+			if cancel != nil {
+				cancel()
+			}
+
+			return nil
+		},
+	})
 }
 
 func runOneshot(ctx context.Context, chk checker.Checker, alt alerter.Alerter, targets []domain.Target) int {
@@ -221,6 +236,7 @@ func runOneshot(ctx context.Context, chk checker.Checker, alt alerter.Alerter, t
 	results := chk.CheckAll(ctx, targets)
 
 	hasFailures := false
+
 	for _, result := range results {
 		if result.Success {
 			slog.Info("Target healthy",
@@ -228,27 +244,40 @@ func runOneshot(ctx context.Context, chk checker.Checker, alt alerter.Alerter, t
 				"status", result.ActualStatus,
 				"latency", result.Latency,
 			)
-		} else {
-			hasFailures = true
-			slog.Error("Target unhealthy",
-				"target", result.Target.Name,
-				"status", result.ActualStatus,
-				"expected", result.Target.ExpectedStatus,
-				"error", result.Error,
-			)
 
-			alert := domain.NewFailureAlert(result)
-			if err := alt.Send(ctx, alert); err != nil {
-				slog.Error("Failed to send alert", "error", err)
-			}
+			continue
 		}
+
+		hasFailures = true
+
+		slog.Error("Target unhealthy",
+			"target", result.Target.Name,
+			"status", result.ActualStatus,
+			"expected", result.Target.ExpectedStatus,
+			"error", result.Error,
+		)
+
+		sendAlert(ctx, alt, domain.NewFailureAlert(result))
 	}
 
 	if hasFailures {
 		slog.Warn("Health check completed with failures")
+
 		return 1
 	}
 
 	slog.Info("Health check completed successfully")
+
 	return 0
+}
+
+// sendAlert fans an alert out under a bounded context so a slow alerter cannot
+// keep the process alive indefinitely.
+func sendAlert(ctx context.Context, alt alerter.Alerter, alert domain.Alert) {
+	ctx, cancel := context.WithTimeout(ctx, config.AlertFanoutTimeout)
+	defer cancel()
+
+	if err := alt.Send(ctx, alert); err != nil {
+		slog.Error("Failed to send alert", "target", alert.Target.Name, "error", err)
+	}
 }
