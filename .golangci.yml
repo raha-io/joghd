@@ -1,0 +1,45 @@
+---
+version: "2"
+
+linters:
+  default: standard
+  enable:
+    # bodyclose would have caught the leaked response bodies in the checker.
+    - bodyclose
+    - noctx
+    - errorlint
+    - gosec
+    - revive
+    - unconvert
+    - unparam
+    - nilerr
+    - copyloopvar
+    - predeclared
+    - usestdlibvars
+    - testifylint
+  settings:
+    revive:
+      rules:
+        - name: exported
+          disabled: true
+    gosec:
+      excludes:
+        # G404 is about weak randomness; nothing here is security sensitive.
+        - G404
+  exclusions:
+    rules:
+      # Test helpers legitimately ignore errors and use raw literals.
+      - path: _test\.go
+        linters:
+          - gosec
+          - noctx
+          - unparam
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/rahacloud/joghd
