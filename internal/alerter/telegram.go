@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
-	"github.com/rahacloud/joghd/internal/domain"
 	"resty.dev/v3"
+
+	"github.com/rahacloud/joghd/internal/domain"
 )
 
 const sadOwlArt = "<pre>" +
@@ -69,14 +71,25 @@ func (t *TelegramAlerter) Send(ctx context.Context, alert domain.Alert) error {
 			ParseMode: "HTML",
 		}).
 		SetResult(&result).
+		// Error responses carry the same shape; without this resty leaves
+		// them undecoded and the reason for the failure is lost.
+		SetResultError(&result).
 		Post("/sendMessage")
 
 	if err != nil {
 		return fmt.Errorf("sending telegram message: %w", err)
 	}
 
+	defer releaseBody(resp)
+
 	if resp.StatusCode() != http.StatusOK || !result.OK {
-		return fmt.Errorf("telegram API error: status %d, description: %s", result.ErrorCode, result.Description)
+		description := result.Description
+		if description == "" {
+			description = strings.TrimSpace(resp.String())
+		}
+
+		return fmt.Errorf("telegram API error: http status %d, error_code %d: %s",
+			resp.StatusCode(), result.ErrorCode, description)
 	}
 
 	return nil

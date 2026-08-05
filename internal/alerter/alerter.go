@@ -2,6 +2,9 @@ package alerter
 
 import (
 	"context"
+	"io"
+
+	"resty.dev/v3"
 
 	"github.com/rahacloud/joghd/internal/domain"
 )
@@ -13,4 +16,15 @@ type Alerter interface {
 
 	// Name returns the alerter implementation name for logging.
 	Name() string
+}
+
+// releaseBody drains and closes a response body so its connection can be
+// reused. resty leaves the body open whenever it has nowhere to decode it.
+func releaseBody(resp *resty.Response) {
+	if resp == nil || resp.Body == nil {
+		return
+	}
+
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
 }

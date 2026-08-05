@@ -6,8 +6,9 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/rahacloud/joghd/internal/domain"
 	"resty.dev/v3"
+
+	"github.com/rahacloud/joghd/internal/domain"
 )
 
 const (
@@ -82,6 +83,8 @@ func (m *MattermostAlerter) Send(ctx context.Context, alert domain.Alert) error 
 	if err != nil {
 		return fmt.Errorf("sending mattermost webhook: %w", err)
 	}
+
+	defer releaseBody(resp)
 
 	if resp.StatusCode() != http.StatusOK {
 		return fmt.Errorf("mattermost webhook error: status %d, body: %s", resp.StatusCode(), resp.String())
