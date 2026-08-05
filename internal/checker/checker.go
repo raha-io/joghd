@@ -50,17 +50,23 @@ func WithConcurrency(n int) Option {
 // New creates a new Checker with the given options.
 func New(opts ...Option) Checker {
 	c := &checker{
-		retryConfig: config.RetryConfig{
-			MaxAttempts: 3,
-			InitialWait: time.Second,
-			MaxWait:     10 * time.Second,
-			Multiplier:  2.0,
-		},
-		concurrency: 10,
+		retryConfig: config.DefaultRetry(),
+		concurrency: config.DefaultConcurrency,
 	}
 
 	for _, opt := range opts {
 		opt(c)
+	}
+
+	// Guard against a caller-supplied zero: an unbuffered semaphore would
+	// block every check forever. Configuration rejects this too, so reaching
+	// here means the checker was constructed directly.
+	if c.concurrency < 1 {
+		c.concurrency = config.DefaultConcurrency
+	}
+
+	if c.retryConfig.MaxAttempts < 1 {
+		c.retryConfig.MaxAttempts = 1
 	}
 
 	return c
@@ -98,6 +104,10 @@ func (c *checker) Check(ctx context.Context, target domain.Target) domain.CheckR
 
 		if err == nil && statusCode == target.ExpectedStatus {
 			result.Success = true
+			// Discard any error recorded by an earlier attempt so a
+			// successful result never carries a stale failure.
+			result.Error = nil
+
 			return result
 		}
 
