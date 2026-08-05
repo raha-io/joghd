@@ -26,13 +26,24 @@ type CLIParams struct {
 
 // Config holds all application configuration.
 type Config struct {
-	fx.Out
-
 	App      AppConfig                `koanf:"app"`
 	HTTP     HTTPConfig               `koanf:"http"`
 	Retry    RetryConfig              `koanf:"retry"`
 	Alerters map[string]AlerterConfig `koanf:"alerters"`
 	Targets  []domain.Target          `koanf:"targets"`
+}
+
+// Sections exposes the loaded configuration sections as individual fx
+// dependencies. Keeping fx.Out off Config itself leaves Config usable as a
+// plain koanf unmarshal target and defaults source.
+type Sections struct {
+	fx.Out
+
+	App      AppConfig
+	HTTP     HTTPConfig
+	Retry    RetryConfig
+	Alerters map[string]AlerterConfig
+	Targets  []domain.Target
 }
 
 // AlerterType identifies the concrete alerter implementation to build.
@@ -145,19 +156,25 @@ func Load(configPath string) (*Config, error) {
 	return &cfg, nil
 }
 
-// ProvideConfig is the fx-compatible provider that loads configuration
-// and returns it by value (required by fx.Out).
-func ProvideConfig(params CLIParams) (Config, error) {
+// ProvideConfig is the fx-compatible provider that loads configuration and
+// exposes each section as a separate dependency.
+func ProvideConfig(params CLIParams) (Sections, error) {
 	cfg, err := Load(params.ConfigPath)
 	if err != nil {
-		return Config{}, err
+		return Sections{}, err
 	}
 
 	if params.Mode != "" {
 		cfg.App.Mode = params.Mode
 	}
 
-	return *cfg, nil
+	return Sections{
+		App:      cfg.App,
+		HTTP:     cfg.HTTP,
+		Retry:    cfg.Retry,
+		Alerters: cfg.Alerters,
+		Targets:  cfg.Targets,
+	}, nil
 }
 
 func validate(cfg *Config) error {
