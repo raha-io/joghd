@@ -1,0 +1,97 @@
+package config
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+)
+
+const minimalConfig = `
+[app]
+mode = "oneshot"
+
+[[targets]]
+name = "api"
+url = "https://api.example.com/health"
+`
+
+const targetsBlock = `
+[[targets]]
+name = "api"
+url = "https://api.example.com/health"
+`
+
+func writeConfig(t *testing.T, body string) string {
+	t.Helper()
+
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatalf("writing config: %v", err)
+	}
+
+	return path
+}
+
+// The env provider hands TransformFunc the raw variable name, so the prefix
+// has to be stripped or every key lands under "joghd_" and overrides nothing.
+func TestLoadEnvOverrides(t *testing.T) {
+	path := writeConfig(t, minimalConfig+`
+[alerters.team_chat]
+type = "telegram"
+enabled = true
+bot_token = "from-file"
+chat_id = "-100"
+`)
+
+	t.Setenv("JOGHD_APP__MODE", "continuous")
+	t.Setenv("JOGHD_APP__CONCURRENCY", "42")
+	t.Setenv("JOGHD_HTTP__TIMEOUT", "3s")
+	t.Setenv("JOGHD_ALERTERS__TEAM_CHAT__BOT_TOKEN", "from-env")
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if cfg.App.Mode != "continuous" {
+		t.Errorf("app.mode = %q, want %q", cfg.App.Mode, "continuous")
+	}
+	if cfg.App.Concurrency != 42 {
+		t.Errorf("app.concurrency = %d, want 42 (string values must decode)", cfg.App.Concurrency)
+	}
+	if cfg.HTTP.Timeout != 3*time.Second {
+		t.Errorf("http.timeout = %s, want 3s (durations must decode)", cfg.HTTP.Timeout)
+	}
+	if got := cfg.Alerters["team_chat"].BotToken; got != "from-env" {
+		t.Errorf("bot_token = %q, want %q (env must win over the file)", got, "from-env")
+	}
+}
+
+func TestLoadFileValuesWinOverDefaults(t *testing.T) {
+	cfg, err := Load(writeConfig(t, `
+[app]
+mode = "continuous"
+concurrency = 3
+
+[[targets]]
+name = "api"
+url = "https://api.example.com/health"
+`))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if cfg.App.Mode != "continuous" {
+		t.Errorf("app.mode = %q, want %q", cfg.App.Mode, "continuous")
+	}
+	if cfg.App.Concurrency != 3 {
+		t.Errorf("app.concurrency = %d, want 3", cfg.App.Concurrency)
+	}
+}
+
+func TestLoadMissingFile(t *testing.T) {
+	if _, err := Load(filepath.Join(t.TempDir(), "absent.toml")); err == nil {
+		t.Error("expected an error for a missing config file, got nil")
+	}
+}

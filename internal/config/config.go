@@ -14,6 +14,10 @@ import (
 	"go.uber.org/fx"
 )
 
+// EnvPrefix is stripped from environment variable names before they are
+// mapped onto configuration keys, e.g. JOGHD_APP__MODE -> app.mode.
+const EnvPrefix = "JOGHD_"
+
 // CLIParams holds command-line parameters supplied before fx starts.
 type CLIParams struct {
 	ConfigPath string
@@ -99,11 +103,15 @@ func Load(configPath string) (*Config, error) {
 		}
 	}
 
-	// Load from environment variables (JOGHD_ prefix)
+	// Load from environment variables (JOGHD_ prefix). The provider hands
+	// TransformFunc the raw variable name, so the prefix has to be stripped
+	// here or every key lands under "joghd_..." and overrides nothing.
 	if err := k.Load(env.Provider(".", env.Opt{
-		Prefix: "JOGHD_",
+		Prefix: EnvPrefix,
 		TransformFunc: func(key, value string) (string, any) {
-			return strings.ReplaceAll(strings.ToLower(key), "__", "."), value
+			key = strings.ToLower(strings.TrimPrefix(key, EnvPrefix))
+
+			return strings.ReplaceAll(key, "__", "."), value
 		},
 	}), nil); err != nil {
 		return nil, fmt.Errorf("loading env config: %w", err)
