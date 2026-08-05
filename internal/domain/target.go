@@ -29,10 +29,12 @@ type CheckResult struct {
 // HealthStatus represents the overall health state of a target.
 type HealthStatus int
 
+// StatusUnknown is first so that the zero value of HealthStatus means "not
+// checked yet" rather than "healthy".
 const (
-	StatusHealthy HealthStatus = iota
+	StatusUnknown HealthStatus = iota
+	StatusHealthy
 	StatusUnhealthy
-	StatusUnknown
 )
 
 func (s HealthStatus) String() string {
