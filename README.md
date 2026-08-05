@@ -50,6 +50,23 @@ go build ./cmd/joghd
 ./joghd -config config.toml -mode continuous
 ```
 
+### Flags
+
+| Flag       | Default       | Description                                       |
+| ---------- | ------------- | ------------------------------------------------- |
+| `-config`  | `config.toml` | Path to the configuration file                    |
+| `-mode`    | from config   | `oneshot` or `continuous`, overrides `app.mode`    |
+| `-quiet`   | `false`       | Suppress the startup banner (useful under cron)   |
+| `-version` | `false`       | Print version information and exit                |
+
+Configuration is validated at startup: an invalid mode, a non-positive
+concurrency, retry or interval value, or an enabled alerter missing its
+credentials all fail fast with an explanatory error rather than starting in a
+broken state.
+
+Target state is kept in memory only, so a restart re-sends a failure alert for
+any target that is still down.
+
 ## Configuration
 
 Create a `config.toml` file (see `configs/config.example.toml`):
@@ -114,8 +131,9 @@ Environment variables override config file values (prefix: `JOGHD_`):
 
 | Variable                                  | Description                                                   |
 | ----------------------------------------- | ------------------------------------------------------------- |
-| `JOGHD_APP_MODE`                          | Run mode (`oneshot` or `continuous`)                          |
-| `JOGHD_HTTP_TIMEOUT`                      | Default HTTP timeout                                          |
+| `JOGHD_APP__MODE`                         | Run mode (`oneshot` or `continuous`)                          |
+| `JOGHD_APP__LOG_LEVEL`                    | Log level (`debug`, `info`, `warn`, `error`)                   |
+| `JOGHD_HTTP__TIMEOUT`                     | Default HTTP timeout                                          |
 | `JOGHD_ALERTERS__<NAME>__BOT_TOKEN`       | Telegram bot token for instance `<name>` (double underscores) |
 | `JOGHD_ALERTERS__<NAME>__CHAT_ID`         | Telegram chat ID for instance `<name>`                        |
 | `JOGHD_ALERTERS__<NAME>__WEBHOOK_URL`     | Mattermost incoming webhook URL for instance `<name>`         |

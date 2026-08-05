@@ -11,8 +11,11 @@
 mode = "continuous"
 # Log level: debug, info, warn, error
 log_level = "info"
-# Maximum concurrent health checks
+# Maximum concurrent health checks (must be at least 1)
 concurrency = 10
+# Re-send an alert for a still-unhealthy target every N check intervals.
+# Set to 0 to disable reminders.
+reminder_multiplier = 6
 
 [http]
 # Default request timeout
@@ -41,13 +44,17 @@ multiplier = 2.0
 # A non-empty list restricts the instance to targets whose `company`
 # matches. Catch-all instances still receive company-matched alerts.
 
+# Enable this once the credentials below are real; the placeholders would
+# otherwise send every alert to a bot token that does not exist.
 [alerters.rahacloud]
 type = "telegram"
-enabled = true
+enabled = false
 # Telegram Bot API token (can be overridden via JOGHD_ALERTERS__RAHACLOUD__BOT_TOKEN)
 bot_token = "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11"
 # Telegram Chat ID (can be overridden via JOGHD_ALERTERS__RAHACLOUD__CHAT_ID)
 chat_id = "-1001234567890"
+# Optional; defaults to 10s. Must be positive: a zero timeout would let a
+# hung alert block health checking.
 timeout = "10s"
 # No `companies` → catch-all, receives every alert.
 
