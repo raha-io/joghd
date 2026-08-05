@@ -2,6 +2,9 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
+	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -10,13 +13,54 @@ import (
 	"github.com/knadh/koanf/providers/file"
 	"github.com/knadh/koanf/providers/structs"
 	"github.com/knadh/koanf/v2"
-	"github.com/rahacloud/joghd/internal/domain"
 	"go.uber.org/fx"
+
+	"github.com/rahacloud/joghd/internal/domain"
 )
 
 // EnvPrefix is stripped from environment variable names before they are
 // mapped onto configuration keys, e.g. JOGHD_APP__MODE -> app.mode.
 const EnvPrefix = "JOGHD_"
+
+// Run modes accepted by app.mode.
+const (
+	ModeOneshot    = "oneshot"
+	ModeContinuous = "continuous"
+)
+
+// Defaults applied to values the operator left unset.
+const (
+	DefaultConcurrency        = 10
+	DefaultReminderMultiplier = 6
+	DefaultHTTPTimeout        = 10 * time.Second
+	DefaultUserAgent          = "Joghd/1.0"
+	DefaultLogLevel           = "info"
+
+	DefaultTargetMethod   = http.MethodGet
+	DefaultTargetInterval = 30 * time.Second
+	DefaultExpectedStatus = http.StatusOK
+	DefaultAlerterTimeout = 10 * time.Second
+)
+
+// AlertFanoutTimeout bounds how long a single alert fan-out may take. It is a
+// safety net on top of the per-alerter timeouts: without it one wedged alerter
+// could stall health checking indefinitely.
+const AlertFanoutTimeout = 30 * time.Second
+
+// logLevels maps app.log_level onto slog levels.
+var logLevels = map[string]slog.Level{
+	"debug": slog.LevelDebug,
+	"info":  slog.LevelInfo,
+	"warn":  slog.LevelWarn,
+	"error": slog.LevelError,
+}
+
+// ParseLogLevel resolves an app.log_level value. The bool reports whether the
+// value was recognised.
+func ParseLogLevel(level string) (slog.Level, bool) {
+	l, ok := logLevels[strings.ToLower(level)]
+	return l, ok
+}
 
 // CLIParams holds command-line parameters supplied before fx starts.
 type CLIParams struct {
@@ -133,24 +177,12 @@ func Load(configPath string) (*Config, error) {
 		return nil, fmt.Errorf("unmarshaling config: %w", err)
 	}
 
+	// Defaults are applied before validation so that validation sees the
+	// values the application will actually run with.
+	applyDefaults(&cfg)
+
 	if err := validate(&cfg); err != nil {
 		return nil, fmt.Errorf("validating config: %w", err)
-	}
-
-	// Apply defaults to targets
-	for i := range cfg.Targets {
-		if cfg.Targets[i].Method == "" {
-			cfg.Targets[i].Method = "GET"
-		}
-		if cfg.Targets[i].Timeout == 0 {
-			cfg.Targets[i].Timeout = cfg.HTTP.Timeout
-		}
-		if cfg.Targets[i].Interval == 0 {
-			cfg.Targets[i].Interval = 30 * time.Second
-		}
-		if cfg.Targets[i].ExpectedStatus == 0 {
-			cfg.Targets[i].ExpectedStatus = 200
-		}
 	}
 
 	return &cfg, nil
@@ -165,6 +197,10 @@ func ProvideConfig(params CLIParams) (Sections, error) {
 	}
 
 	if params.Mode != "" {
+		if err := validateMode(params.Mode); err != nil {
+			return Sections{}, fmt.Errorf("-mode flag: %w", err)
+		}
+
 		cfg.App.Mode = params.Mode
 	}
 
@@ -177,15 +213,99 @@ func ProvideConfig(params CLIParams) (Sections, error) {
 	}, nil
 }
 
-func validate(cfg *Config) error {
-	if cfg.App.Mode != "oneshot" && cfg.App.Mode != "continuous" {
-		return fmt.Errorf("invalid app.mode: %s (must be 'oneshot' or 'continuous')", cfg.App.Mode)
+func applyDefaults(cfg *Config) {
+	for name, a := range cfg.Alerters {
+		if a.Timeout == 0 {
+			a.Timeout = DefaultAlerterTimeout
+			cfg.Alerters[name] = a
+		}
 	}
 
-	for name, a := range cfg.Alerters {
+	for i := range cfg.Targets {
+		t := &cfg.Targets[i]
+
+		if t.Method == "" {
+			t.Method = DefaultTargetMethod
+		}
+		if t.Timeout == 0 {
+			t.Timeout = cfg.HTTP.Timeout
+		}
+		if t.Interval == 0 {
+			t.Interval = DefaultTargetInterval
+		}
+		if t.ExpectedStatus == 0 {
+			t.ExpectedStatus = DefaultExpectedStatus
+		}
+	}
+}
+
+func validate(cfg *Config) error {
+	if err := validateMode(cfg.App.Mode); err != nil {
+		return fmt.Errorf("app.mode: %w", err)
+	}
+
+	if _, ok := ParseLogLevel(cfg.App.LogLevel); !ok {
+		return fmt.Errorf("invalid app.log_level: %q (must be debug, info, warn or error)", cfg.App.LogLevel)
+	}
+
+	// A non-positive value would turn the checker's semaphore into an
+	// unbuffered channel nobody ever reads from, hanging every check.
+	if cfg.App.Concurrency < 1 {
+		return fmt.Errorf("app.concurrency must be at least 1, got %d", cfg.App.Concurrency)
+	}
+
+	if cfg.App.ReminderMultiplier < 0 {
+		return fmt.Errorf("app.reminder_multiplier must be non-negative, got %d", cfg.App.ReminderMultiplier)
+	}
+
+	if cfg.HTTP.Timeout <= 0 {
+		return fmt.Errorf("http.timeout must be positive, got %s", cfg.HTTP.Timeout)
+	}
+
+	if err := validateRetry(cfg.Retry); err != nil {
+		return err
+	}
+
+	if err := validateAlerters(cfg.Alerters); err != nil {
+		return err
+	}
+
+	return validateTargets(cfg.Targets)
+}
+
+func validateMode(mode string) error {
+	if mode != ModeOneshot && mode != ModeContinuous {
+		return fmt.Errorf("invalid mode: %q (must be %q or %q)", mode, ModeOneshot, ModeContinuous)
+	}
+
+	return nil
+}
+
+func validateRetry(r RetryConfig) error {
+	// Zero attempts would report every target as down without ever sending
+	// a request.
+	if r.MaxAttempts < 1 {
+		return fmt.Errorf("retry.max_attempts must be at least 1, got %d", r.MaxAttempts)
+	}
+	if r.InitialWait <= 0 {
+		return fmt.Errorf("retry.initial_wait must be positive, got %s", r.InitialWait)
+	}
+	if r.MaxWait < r.InitialWait {
+		return fmt.Errorf("retry.max_wait (%s) must be greater than or equal to retry.initial_wait (%s)", r.MaxWait, r.InitialWait)
+	}
+	if r.Multiplier < 1 {
+		return fmt.Errorf("retry.multiplier must be at least 1, got %v", r.Multiplier)
+	}
+
+	return nil
+}
+
+func validateAlerters(alerters map[string]AlerterConfig) error {
+	for name, a := range alerters {
 		if !a.Enabled {
 			continue
 		}
+
 		switch a.Type {
 		case AlerterTypeTelegram:
 			if a.BotToken == "" {
@@ -203,18 +323,58 @@ func validate(cfg *Config) error {
 		default:
 			return fmt.Errorf("alerters.%s.type %q is not supported", name, a.Type)
 		}
-	}
 
-	if cfg.App.ReminderMultiplier < 0 {
-		return fmt.Errorf("app.reminder_multiplier must be non-negative, got %d", cfg.App.ReminderMultiplier)
-	}
-
-	for i, t := range cfg.Targets {
-		if t.URL == "" {
-			return fmt.Errorf("target[%d]: url is required", i)
+		// A zero timeout means "no timeout" to the underlying HTTP client,
+		// which lets a hung alert block health checks.
+		if a.Timeout <= 0 {
+			return fmt.Errorf("alerters.%s.timeout must be positive, got %s", name, a.Timeout)
 		}
+	}
+
+	return nil
+}
+
+func validateTargets(targets []domain.Target) error {
+	if len(targets) == 0 {
+		return fmt.Errorf("no targets configured")
+	}
+
+	seen := make(map[string]int, len(targets))
+
+	for i, t := range targets {
 		if t.Name == "" {
 			return fmt.Errorf("target[%d]: name is required", i)
+		}
+		if t.URL == "" {
+			return fmt.Errorf("target[%d] (%s): url is required", i, t.Name)
+		}
+
+		if j, ok := seen[t.Name]; ok {
+			return fmt.Errorf("target[%d]: duplicate name %q (already used by target[%d])", i, t.Name, j)
+		}
+		seen[t.Name] = i
+
+		u, err := url.Parse(t.URL)
+		if err != nil {
+			return fmt.Errorf("target[%d] (%s): invalid url %q: %w", i, t.Name, t.URL, err)
+		}
+		if u.Scheme != "http" && u.Scheme != "https" {
+			return fmt.Errorf("target[%d] (%s): url %q must use the http or https scheme", i, t.Name, t.URL)
+		}
+		if u.Host == "" {
+			return fmt.Errorf("target[%d] (%s): url %q is missing a host", i, t.Name, t.URL)
+		}
+
+		// time.NewTicker panics on a non-positive interval, which would take
+		// the whole process down.
+		if t.Interval <= 0 {
+			return fmt.Errorf("target[%d] (%s): interval must be positive, got %s", i, t.Name, t.Interval)
+		}
+		if t.Timeout <= 0 {
+			return fmt.Errorf("target[%d] (%s): timeout must be positive, got %s", i, t.Name, t.Timeout)
+		}
+		if t.ExpectedStatus < 100 || t.ExpectedStatus > 599 {
+			return fmt.Errorf("target[%d] (%s): expected_status %d is not a valid HTTP status code", i, t.Name, t.ExpectedStatus)
 		}
 	}
 

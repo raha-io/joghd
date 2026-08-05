@@ -6,22 +6,28 @@ import "time"
 func Default() Config {
 	return Config{
 		App: AppConfig{
-			Mode:               "oneshot",
-			LogLevel:           "info",
-			Concurrency:        10,
-			ReminderMultiplier: 6,
+			Mode:               ModeOneshot,
+			LogLevel:           DefaultLogLevel,
+			Concurrency:        DefaultConcurrency,
+			ReminderMultiplier: DefaultReminderMultiplier,
 		},
 		HTTP: HTTPConfig{
-			Timeout:             10 * time.Second,
-			UserAgent:           "Joghd/1.0",
+			Timeout:             DefaultHTTPTimeout,
+			UserAgent:           DefaultUserAgent,
 			SkipTLSVerification: false,
 		},
-		Retry: RetryConfig{
-			MaxAttempts: 3,
-			InitialWait: 1 * time.Second,
-			MaxWait:     10 * time.Second,
-			Multiplier:  2.0,
-		},
+		Retry:    DefaultRetry(),
 		Alerters: map[string]AlerterConfig{},
+	}
+}
+
+// DefaultRetry returns the default retry behaviour. The checker shares it so
+// its fallback cannot drift from the configuration defaults.
+func DefaultRetry() RetryConfig {
+	return RetryConfig{
+		MaxAttempts: 3,
+		InitialWait: 1 * time.Second,
+		MaxWait:     10 * time.Second,
+		Multiplier:  2.0,
 	}
 }

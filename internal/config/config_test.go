@@ -44,7 +44,7 @@ bot_token = "from-file"
 chat_id = "-100"
 `)
 
-	t.Setenv("JOGHD_APP__MODE", "continuous")
+	t.Setenv("JOGHD_APP__MODE", ModeContinuous)
 	t.Setenv("JOGHD_APP__CONCURRENCY", "42")
 	t.Setenv("JOGHD_HTTP__TIMEOUT", "3s")
 	t.Setenv("JOGHD_ALERTERS__TEAM_CHAT__BOT_TOKEN", "from-env")
@@ -54,8 +54,8 @@ chat_id = "-100"
 		t.Fatalf("Load: %v", err)
 	}
 
-	if cfg.App.Mode != "continuous" {
-		t.Errorf("app.mode = %q, want %q", cfg.App.Mode, "continuous")
+	if cfg.App.Mode != ModeContinuous {
+		t.Errorf("app.mode = %q, want %q", cfg.App.Mode, ModeContinuous)
 	}
 	if cfg.App.Concurrency != 42 {
 		t.Errorf("app.concurrency = %d, want 42 (string values must decode)", cfg.App.Concurrency)
@@ -82,8 +82,8 @@ url = "https://api.example.com/health"
 		t.Fatalf("Load: %v", err)
 	}
 
-	if cfg.App.Mode != "continuous" {
-		t.Errorf("app.mode = %q, want %q", cfg.App.Mode, "continuous")
+	if cfg.App.Mode != ModeContinuous {
+		t.Errorf("app.mode = %q, want %q", cfg.App.Mode, ModeContinuous)
 	}
 	if cfg.App.Concurrency != 3 {
 		t.Errorf("app.concurrency = %d, want 3", cfg.App.Concurrency)
