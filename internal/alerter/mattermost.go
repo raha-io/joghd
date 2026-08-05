@@ -97,8 +97,8 @@ func (m *MattermostAlerter) Name() string {
 
 func buildMattermostAttachment(alert domain.Alert) mattermostAttachment {
 	var (
-		color  string
-		title  string
+		color string
+		title string
 	)
 
 	switch alert.Type {

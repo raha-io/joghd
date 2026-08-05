@@ -24,11 +24,11 @@ type CLIParams struct {
 type Config struct {
 	fx.Out
 
-	App      AppConfig                 `koanf:"app"`
-	HTTP     HTTPConfig                `koanf:"http"`
-	Retry    RetryConfig               `koanf:"retry"`
-	Alerters map[string]AlerterConfig  `koanf:"alerters"`
-	Targets  []domain.Target           `koanf:"targets"`
+	App      AppConfig                `koanf:"app"`
+	HTTP     HTTPConfig               `koanf:"http"`
+	Retry    RetryConfig              `koanf:"retry"`
+	Alerters map[string]AlerterConfig `koanf:"alerters"`
+	Targets  []domain.Target          `koanf:"targets"`
 }
 
 // AlerterType identifies the concrete alerter implementation to build.

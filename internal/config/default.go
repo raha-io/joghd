@@ -7,7 +7,7 @@ func Default() Config {
 	return Config{
 		App: AppConfig{
 			Mode:               "oneshot",
-			LogLevel:            "info",
+			LogLevel:           "info",
 			Concurrency:        10,
 			ReminderMultiplier: 6,
 		},
