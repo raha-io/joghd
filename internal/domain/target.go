@@ -1,3 +1,6 @@
+// Package domain holds the core joghd types shared by every other package:
+// the [Target] being monitored, the [CheckResult] of probing it, and the
+// [Alert] raised when its health changes.
 package domain
 
 import "time"

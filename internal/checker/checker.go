@@ -1,3 +1,9 @@
+// Package checker performs the HTTP health checks themselves.
+//
+// [Checker] probes one target or a whole set of them, retrying with capped
+// exponential backoff and bounding how many probes run at once. [HTTPClient]
+// abstracts the transport so a caller can substitute one in tests;
+// [RestyClient] is the production implementation.
 package checker
 
 import (

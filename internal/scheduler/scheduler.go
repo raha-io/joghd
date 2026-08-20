@@ -1,3 +1,10 @@
+// Package scheduler runs health checks on a repeating schedule and decides
+// which state changes are worth alerting about.
+//
+// Each target gets its own goroutine and its own state, so targets never
+// interfere with one another. Alerts fire on the transition into failure, on
+// recovery, and on a reminder cadence derived from the target's interval;
+// a steady-state failure is logged rather than re-alerted.
 package scheduler
 
 import (

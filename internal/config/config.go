@@ -1,3 +1,9 @@
+// Package config loads, defaults and validates the joghd configuration.
+//
+// Values are layered: struct defaults first, then the TOML file, then
+// JOGHD_-prefixed environment variables, with "__" separating structural
+// levels. Everything is validated at startup so a misconfigured run fails
+// immediately instead of silently monitoring nothing.
 package config
 
 import (

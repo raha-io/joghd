@@ -1,3 +1,16 @@
+// Command joghd is a URL health check and uptime monitoring service.
+//
+// It probes HTTP and HTTPS endpoints on a schedule, retries with exponential
+// backoff before believing a failure, and pushes alerts to Telegram and
+// Mattermost when a target goes down, is still down, or recovers. It runs
+// either as a one-shot check that exits with a non-zero status (suitable for
+// cron or a CI job) or as a long-lived monitor.
+//
+// Usage:
+//
+//	joghd [-config path] [-mode oneshot|continuous] [-quiet] [-version]
+//
+// See https://github.com/rahacloud/joghd for the configuration reference.
 package main
 
 import (

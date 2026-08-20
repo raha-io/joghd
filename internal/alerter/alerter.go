@@ -1,3 +1,9 @@
+// Package alerter delivers health-check alerts to notification channels.
+//
+// Every channel implements [Alerter]. [CompositeAlerter] fans one alert out to
+// several of them and joins their failures, [CompanyFilter] restricts a
+// channel to the targets of particular companies, and [TelegramAlerter] and
+// [MattermostAlerter] are the shipped implementations.
 package alerter
 
 import (
