@@ -27,16 +27,16 @@ type mattermostAttachment struct {
 	Fallback string            `json:"fallback"`
 	Color    string            `json:"color"`
 	Title    string            `json:"title"`
-	Text     string            `json:"text,omitempty"`
-	Fields   []mattermostField `json:"fields,omitempty"`
-	Footer   string            `json:"footer,omitempty"`
+	Text     string            `json:"text,omitzero"`
+	Fields   []mattermostField `json:"fields,omitzero"`
+	Footer   string            `json:"footer,omitzero"`
 }
 
 type mattermostPayload struct {
-	Channel     string                 `json:"channel,omitempty"`
-	Username    string                 `json:"username,omitempty"`
-	IconURL     string                 `json:"icon_url,omitempty"`
-	Text        string                 `json:"text,omitempty"`
+	Channel     string                 `json:"channel,omitzero"`
+	Username    string                 `json:"username,omitzero"`
+	IconURL     string                 `json:"icon_url,omitzero"`
+	Text        string                 `json:"text,omitzero"`
 	Attachments []mattermostAttachment `json:"attachments"`
 }
 
@@ -54,7 +54,7 @@ type MattermostAlerter struct {
 // channel/username/iconURL arguments override the webhook defaults and
 // may be empty.
 func NewMattermostAlerter(name, webhookURL, channel, username, iconURL string, timeout time.Duration) *MattermostAlerter {
-	client := resty.New().SetTimeout(timeout)
+	client := withJSONv2(resty.New().SetTimeout(timeout))
 
 	return &MattermostAlerter{
 		client:     client,

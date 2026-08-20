@@ -3,7 +3,8 @@
 // Every channel implements [Alerter]. [CompositeAlerter] fans one alert out to
 // several of them and joins their failures, [CompanyFilter] restricts a
 // channel to the targets of particular companies, and [TelegramAlerter] and
-// [MattermostAlerter] are the shipped implementations.
+// [MattermostAlerter] are the shipped implementations. Payloads are encoded
+// with encoding/json/v2 (see json.go).
 package alerter
 
 import (

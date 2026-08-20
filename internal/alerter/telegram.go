@@ -48,9 +48,9 @@ type TelegramAlerter struct {
 // NewTelegramAlerter creates a new Telegram alerter instance. The name
 // is an operator-chosen label used in logs and error messages.
 func NewTelegramAlerter(name, botToken, chatID string, timeout time.Duration) *TelegramAlerter {
-	client := resty.New().
+	client := withJSONv2(resty.New().
 		SetBaseURL(fmt.Sprintf("https://api.telegram.org/bot%s", botToken)).
-		SetTimeout(timeout)
+		SetTimeout(timeout))
 
 	return &TelegramAlerter{
 		client: client,
