@@ -178,20 +178,77 @@ func Load(configPath string) (*Config, error) {
 		return nil, fmt.Errorf("loading env config: %w", err)
 	}
 
-	var cfg Config
-	if err := k.Unmarshal("", &cfg); err != nil {
-		return nil, fmt.Errorf("unmarshaling config: %w", err)
+	cfg, err := decodeSections(&loader{k: k})
+	if err != nil {
+		return nil, err
 	}
 
 	// Defaults are applied before validation so that validation sees the
 	// values the application will actually run with.
-	applyDefaults(&cfg)
+	applyDefaults(cfg)
 
-	if err := validate(&cfg); err != nil {
+	if err := validate(cfg); err != nil {
 		return nil, fmt.Errorf("validating config: %w", err)
 	}
 
-	return &cfg, nil
+	return cfg, nil
+}
+
+// loader decodes individual configuration subtrees out of a koanf instance.
+type loader struct {
+	k *koanf.Koanf
+}
+
+// Section decodes the configuration subtree at path into a freshly allocated
+// T. It is a generic method (Go 1.27): the decoded type is chosen by each
+// caller and has nothing to do with the receiver, so it cannot be hoisted onto
+// loader as a type parameter the way pre-1.27 Go would have forced.
+func (l *loader) Section[T any](path string) (T, error) {
+	var out T
+
+	if err := l.k.Unmarshal(path, &out); err != nil {
+		return out, fmt.Errorf("unmarshaling %s config: %w", path, err)
+	}
+
+	return out, nil
+}
+
+// decodeSections assembles a Config from the individual subtrees so that a
+// malformed section names itself in the error instead of failing the whole
+// document anonymously.
+func decodeSections(l *loader) (*Config, error) {
+	app, err := l.Section[AppConfig]("app")
+	if err != nil {
+		return nil, err
+	}
+
+	httpCfg, err := l.Section[HTTPConfig]("http")
+	if err != nil {
+		return nil, err
+	}
+
+	retry, err := l.Section[RetryConfig]("retry")
+	if err != nil {
+		return nil, err
+	}
+
+	alerters, err := l.Section[map[string]AlerterConfig]("alerters")
+	if err != nil {
+		return nil, err
+	}
+
+	targets, err := l.Section[[]domain.Target]("targets")
+	if err != nil {
+		return nil, err
+	}
+
+	return &Config{
+		App:      app,
+		HTTP:     httpCfg,
+		Retry:    retry,
+		Alerters: alerters,
+		Targets:  targets,
+	}, nil
 }
 
 // ProvideConfig is the fx-compatible provider that loads configuration and
