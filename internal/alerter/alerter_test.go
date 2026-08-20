@@ -63,7 +63,7 @@ func TestCompanyFilter(t *testing.T) {
 			inner := &stubAlerter{name: "inner"}
 			f := NewCompanyFilter(inner, tc.companies)
 
-			if err := f.Send(context.Background(), alertFor(tc.company)); err != nil {
+			if err := f.Send(t.Context(), alertFor(tc.company)); err != nil {
 				t.Fatalf("Send: %v", err)
 			}
 
@@ -83,7 +83,7 @@ func TestCompositeAlerterAggregatesErrors(t *testing.T) {
 	c := NewCompositeAlerter(ok, broken)
 	c.Add(alsoBroken)
 
-	err := c.Send(context.Background(), alertFor("Acme"))
+	err := c.Send(t.Context(), alertFor("Acme"))
 	if err == nil {
 		t.Fatal("expected an aggregated error, got nil")
 	}
@@ -105,7 +105,7 @@ func TestCompositeAlerterAggregatesErrors(t *testing.T) {
 func TestCompositeAlerterSucceedsWhenAllSucceed(t *testing.T) {
 	c := NewCompositeAlerter(&stubAlerter{name: "a"}, &stubAlerter{name: "b"})
 
-	if err := c.Send(context.Background(), alertFor("Acme")); err != nil {
+	if err := c.Send(t.Context(), alertFor("Acme")); err != nil {
 		t.Errorf("Send: %v", err)
 	}
 	if name := c.Name(); !strings.Contains(name, "a") || !strings.Contains(name, "b") {
@@ -116,7 +116,7 @@ func TestCompositeAlerterSucceedsWhenAllSucceed(t *testing.T) {
 func TestTelegramAlerterSuccess(t *testing.T) {
 	var gotBody atomic.Value
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		buf := make([]byte, r.ContentLength)
 		_, _ = r.Body.Read(buf)
 		gotBody.Store(string(buf))
@@ -124,12 +124,11 @@ func TestTelegramAlerterSuccess(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"ok":true}`))
 	}))
-	defer srv.Close()
 
 	a := NewTelegramAlerter("raha", "token", "-100", 5*time.Second)
-	a.client.SetBaseURL(srv.URL)
+	a.client.SetTransport(srv.Client().Transport).SetBaseURL(srv.URL)
 
-	if err := a.Send(context.Background(), alertFor("Acme")); err != nil {
+	if err := a.Send(t.Context(), alertFor("Acme")); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 	if body, _ := gotBody.Load().(string); !strings.Contains(body, "-100") {
@@ -171,7 +170,7 @@ func TestTelegramAlerterReportsAPIErrors(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				if strings.HasPrefix(tc.body, "{") {
 					w.Header().Set("Content-Type", "application/json")
 				} else {
@@ -180,12 +179,11 @@ func TestTelegramAlerterReportsAPIErrors(t *testing.T) {
 				w.WriteHeader(tc.status)
 				_, _ = w.Write([]byte(tc.body))
 			}))
-			defer srv.Close()
 
 			a := NewTelegramAlerter("raha", "token", "-100", 5*time.Second)
-			a.client.SetBaseURL(srv.URL)
+			a.client.SetTransport(srv.Client().Transport).SetBaseURL(srv.URL)
 
-			err := a.Send(context.Background(), alertFor("Acme"))
+			err := a.Send(t.Context(), alertFor("Acme"))
 			if err == nil {
 				t.Fatal("expected an error, got nil")
 			}
@@ -202,15 +200,18 @@ func TestTelegramAlerterReportsAPIErrors(t *testing.T) {
 func TestMattermostAlerter(t *testing.T) {
 	var gotPath atomic.Value
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath.Store(r.URL.Path)
 		_, _ = w.Write([]byte("ok"))
 	}))
-	defer srv.Close()
+
+	// srv.URL is only populated once Client/Start has been called.
+	transport := srv.Client().Transport
 
 	a := NewMattermostAlerter("team", srv.URL+"/hooks/abc", "#alerts", "Joghd", "", 5*time.Second)
+	a.client.SetTransport(transport)
 
-	if err := a.Send(context.Background(), alertFor("Acme")); err != nil {
+	if err := a.Send(t.Context(), alertFor("Acme")); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 	if path, _ := gotPath.Load().(string); path != "/hooks/abc" {
@@ -222,15 +223,17 @@ func TestMattermostAlerter(t *testing.T) {
 }
 
 func TestMattermostAlerterReportsWebhookErrors(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		_, _ = w.Write([]byte("Invalid webhook"))
 	}))
-	defer srv.Close()
+
+	transport := srv.Client().Transport
 
 	a := NewMattermostAlerter("team", srv.URL+"/hooks/nope", "", "", "", 5*time.Second)
+	a.client.SetTransport(transport)
 
-	err := a.Send(context.Background(), alertFor("Acme"))
+	err := a.Send(t.Context(), alertFor("Acme"))
 	if err == nil {
 		t.Fatal("expected an error, got nil")
 	}
