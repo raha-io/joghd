@@ -114,7 +114,7 @@ func TestRunOneshotExitCodes(t *testing.T) {
 			chk := &stubChecker{success: tc.success}
 			alt := &stubAlerter{}
 
-			got := runOneshot(context.Background(), chk, alt, testTargets())
+			got := runOneshot(t.Context(), chk, alt, testTargets())
 
 			if got != tc.wantExitCode {
 				t.Errorf("exit code = %d, want %d", got, tc.wantExitCode)
@@ -132,7 +132,7 @@ func TestRunOneshotIgnoresAlerterFailure(t *testing.T) {
 	chk := &stubChecker{success: false}
 	alt := &stubAlerter{err: errors.New("telegram is down")}
 
-	if got := runOneshot(context.Background(), chk, alt, testTargets()); got != 1 {
+	if got := runOneshot(t.Context(), chk, alt, testTargets()); got != 1 {
 		t.Errorf("exit code = %d, want 1", got)
 	}
 }
@@ -141,7 +141,7 @@ func TestRunOneshotBoundsAlertSends(t *testing.T) {
 	chk := &stubChecker{success: false}
 	alt := &stubAlerter{}
 
-	runOneshot(context.Background(), chk, alt, testTargets())
+	runOneshot(t.Context(), chk, alt, testTargets())
 
 	if !alt.deadline {
 		t.Error("alert was sent with a context that has no deadline")
@@ -222,10 +222,10 @@ func TestProvideLoggerLevels(t *testing.T) {
 		t.Run(tc.level, func(t *testing.T) {
 			logger := provideLogger(config.AppConfig{LogLevel: tc.level})
 
-			if got := logger.Enabled(context.Background(), slog.LevelDebug); got != tc.wantDebug {
+			if got := logger.Enabled(t.Context(), slog.LevelDebug); got != tc.wantDebug {
 				t.Errorf("debug enabled = %v, want %v", got, tc.wantDebug)
 			}
-			if got := logger.Enabled(context.Background(), slog.LevelError); got != tc.wantErrors {
+			if got := logger.Enabled(t.Context(), slog.LevelError); got != tc.wantErrors {
 				t.Errorf("error enabled = %v, want %v", got, tc.wantErrors)
 			}
 		})
@@ -302,7 +302,7 @@ func TestProvideChecker(t *testing.T) {
 		t.Fatal("provideChecker returned nil")
 	}
 
-	results := c.CheckAll(context.Background(), testTargets())
+	results := c.CheckAll(t.Context(), testTargets())
 	if len(results) != 1 {
 		t.Fatalf("got %d results, want 1", len(results))
 	}

@@ -17,11 +17,17 @@ linters:
     - predeclared
     - usestdlibvars
     - testifylint
+    # Keeps the test suite on the modern idioms adopted for Go 1.27:
+    # t.Context() over context.Background(), t.TempDir(), t.Setenv.
+    - usetesting
   settings:
     revive:
       rules:
         - name: exported
           disabled: true
+    usetesting:
+      context-background: true
+      context-todo: true
     gosec:
       excludes:
         # G404 is about weak randomness; nothing here is security sensitive.
