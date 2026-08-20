@@ -4,12 +4,15 @@
 // Each target gets its own goroutine and its own state, so targets never
 // interfere with one another. Alerts fire on the transition into failure, on
 // recovery, and on a reminder cadence derived from the target's interval;
-// a steady-state failure is logged rather than re-alerted.
+// a steady-state failure is logged rather than re-alerted. Sleeps between
+// checks carry a small random jitter so targets sharing an interval do not
+// probe in lockstep.
 package scheduler
 
 import (
 	"context"
 	"log/slog"
+	"math/rand/v2"
 	"sync"
 	"time"
 
@@ -19,12 +22,23 @@ import (
 	"github.com/rahacloud/joghd/internal/domain"
 )
 
+// tickJitterFraction is the largest share of a target's interval that may be
+// added to any one sleep between checks. Without it every target configured
+// with the same interval fires in lockstep for the life of the process, so a
+// group of endpoints behind one gateway all get probed on the same instant.
+const tickJitterFraction = 0.1
+
 // targetState tracks one target between checks. Each instance belongs to the
 // single goroutine running that target's loop, so it needs no locking and two
 // targets sharing a URL cannot interfere with each other.
 type targetState struct {
 	status        domain.HealthStatus
 	lastAlertTime time.Time
+
+	// rand is owned by this target's goroutine and created on first use.
+	// math/rand/v2's *Rand is not safe for concurrent use, so each loop gets
+	// its own rather than contending on the global source.
+	rand *rand.Rand
 }
 
 // Scheduler manages periodic health checks for multiple targets.
@@ -66,22 +80,43 @@ func (s *Scheduler) Start(ctx context.Context) error {
 }
 
 func (s *Scheduler) runTargetLoop(ctx context.Context, target domain.Target) {
-	ticker := time.NewTicker(target.Interval)
-	defer ticker.Stop()
-
 	state := targetState{status: domain.StatusUnknown}
 
 	// Run initial check immediately
 	s.checkAndAlert(ctx, target, &state)
 
+	// A timer rather than a ticker: the delay is recomputed every round so
+	// the jitter is re-drawn instead of being a fixed per-target offset.
+	timer := time.NewTimer(state.nextDelay(target.Interval))
+	defer timer.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
+		case <-timer.C:
 			s.checkAndAlert(ctx, target, &state)
+			timer.Reset(state.nextDelay(target.Interval))
 		}
 	}
+}
+
+// nextDelay returns interval plus up to tickJitterFraction of it.
+//
+// (*Rand).N is new in Go 1.27; being generic it draws the offset directly as a
+// time.Duration, so the jitter cannot be computed in the wrong unit the way an
+// int64 round trip through Int64N invites.
+func (t *targetState) nextDelay(interval time.Duration) time.Duration {
+	spread := time.Duration(float64(interval) * tickJitterFraction)
+	if spread <= 0 {
+		return interval
+	}
+
+	if t.rand == nil {
+		t.rand = rand.New(rand.NewPCG(rand.Uint64(), rand.Uint64()))
+	}
+
+	return interval + t.rand.N(spread)
 }
 
 func (s *Scheduler) checkAndAlert(ctx context.Context, target domain.Target, state *targetState) {

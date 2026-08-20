@@ -17,6 +17,7 @@ type stubChecker struct {
 	mu      sync.Mutex
 	success bool
 	checks  int
+	at      []time.Time
 }
 
 func (s *stubChecker) Check(_ context.Context, target domain.Target) domain.CheckResult {
@@ -24,6 +25,7 @@ func (s *stubChecker) Check(_ context.Context, target domain.Target) domain.Chec
 	defer s.mu.Unlock()
 
 	s.checks++
+	s.at = append(s.at, time.Now())
 
 	result := domain.CheckResult{Target: target, Success: s.success, Timestamp: time.Now(), Attempts: 1}
 	if s.success {
@@ -59,6 +61,18 @@ func (s *stubChecker) count() int {
 	return s.checks
 }
 
+// gaps returns the interval between consecutive checks.
+func (s *stubChecker) gaps() []time.Duration {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	gaps := make([]time.Duration, 0, max(len(s.at)-1, 0))
+	for i := 1; i < len(s.at); i++ {
+		gaps = append(gaps, s.at[i].Sub(s.at[i-1]))
+	}
+
+	return gaps
+}
 
 // recordingAlerter captures the alert types it was asked to send.
 type recordingAlerter struct {
@@ -310,6 +324,47 @@ func TestStartStopsOnContextCancellation(t *testing.T) {
 
 		if chk.count() < 2 {
 			t.Errorf("performed %d checks, expected the loop to fire repeatedly", chk.count())
+		}
+	})
+}
+
+// Jitter keeps targets that share an interval from probing in lockstep, but it
+// must stay inside the operator's configured interval budget. A fake clock is
+// what makes the bound assertable at all.
+func TestTickIntervalIsJittered(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		chk := &stubChecker{success: true}
+		s := newScheduler(chk, &recordingAlerter{}, 0)
+
+		ctx, cancel := context.WithCancel(t.Context())
+
+		done := make(chan error, 1)
+		go func() { done <- s.Start(ctx) }()
+
+		interval := testTarget().Interval
+		synctest.Sleep(50 * interval)
+		cancel()
+		<-done
+
+		gaps := chk.gaps()
+		if len(gaps) < 10 {
+			t.Fatalf("recorded %d gaps, want at least 10", len(gaps))
+		}
+
+		upper := interval + time.Duration(float64(interval)*tickJitterFraction)
+
+		jittered := false
+		for i, gap := range gaps {
+			if gap < interval || gap > upper {
+				t.Errorf("gap[%d] = %s, want within [%s, %s]", i, gap, interval, upper)
+			}
+			if gap != interval {
+				jittered = true
+			}
+		}
+
+		if !jittered {
+			t.Error("every gap was exactly the interval; the jitter is not being applied")
 		}
 	})
 }
