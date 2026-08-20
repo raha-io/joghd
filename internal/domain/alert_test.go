@@ -3,6 +3,7 @@ package domain
 import (
 	"errors"
 	"testing"
+	"uuid"
 )
 
 func TestAlertConstructors(t *testing.T) {
@@ -103,5 +104,42 @@ func TestStringers(t *testing.T) {
 		if tc.got != tc.want {
 			t.Errorf("got %q, want %q", tc.got, tc.want)
 		}
+	}
+}
+
+// Every alert carries its own correlation ID so one incident can be followed
+// from the log line through each alerter that fanned it out.
+func TestAlertIDsAreUniqueAndOrdered(t *testing.T) {
+	result := CheckResult{Target: Target{Name: "api"}}
+
+	alerts := []Alert{
+		NewFailureAlert(result),
+		NewReminderAlert(result),
+		NewRecoveryAlert(result),
+	}
+
+	seen := make(map[uuid.UUID]struct{}, len(alerts))
+
+	for i, a := range alerts {
+		if a.ID == uuid.Nil() {
+			t.Errorf("alerts[%d] has the nil UUID", i)
+		}
+		if _, dup := seen[a.ID]; dup {
+			t.Errorf("alerts[%d] reused ID %s", i, a.ID)
+		}
+		seen[a.ID] = struct{}{}
+
+		// Version 7 UUIDs are time-ordered, so IDs minted in sequence must
+		// compare in that order. A v4 ID would fail this most of the time.
+		if i > 0 && alerts[i-1].ID.Compare(a.ID) > 0 {
+			t.Errorf("alerts[%d] (%s) sorts before alerts[%d] (%s); IDs are not time-ordered",
+				i, a.ID, i-1, alerts[i-1].ID)
+		}
+	}
+
+	// The textual form must round-trip, since that is what reaches the chat
+	// message and the log.
+	if got := uuid.MustParse(alerts[0].ID.String()); got != alerts[0].ID {
+		t.Errorf("round-trip gave %s, want %s", got, alerts[0].ID)
 	}
 }

@@ -136,13 +136,15 @@ func formatTelegramMessage(alert domain.Alert) string {
 		"📊 <b>Expected:</b> %d → <b>Actual:</b> %d\n"+
 		"⏱ <b>Latency:</b> %s\n"+
 		"🔄 <b>Attempts:</b> %d\n\n"+
-		"🕐 <i>%s</i>",
+		"🕐 <i>%s</i>\n"+
+		"🆔 <code>%s</code>",
 		alert.Target.URL,
 		alert.Target.ExpectedStatus,
 		alert.Result.ActualStatus,
 		alert.Result.Latency.Round(time.Millisecond),
 		alert.Result.Attempts,
 		alert.Timestamp.Format("2006-01-02 15:04:05 MST"),
+		alert.ID,
 	)
 
 	msg := header + "\n" + owlArt + "\n<blockquote>" + details + "</blockquote>"

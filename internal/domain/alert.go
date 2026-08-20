@@ -1,6 +1,9 @@
 package domain
 
-import "time"
+import (
+	"time"
+	"uuid"
+)
 
 // AlertType indicates whether this is a failure or recovery alert.
 type AlertType int
@@ -48,6 +51,10 @@ func (s Severity) String() string {
 
 // Alert represents a notification to be sent.
 type Alert struct {
+	// ID correlates one logical alert across every alerter it fans out to
+	// and across the log lines it produces. Version 7 UUIDs embed their
+	// creation time, so sorting a set of IDs orders the alerts.
+	ID        uuid.UUID
 	Type      AlertType
 	Target    Target
 	Result    CheckResult
@@ -64,6 +71,7 @@ func NewFailureAlert(result CheckResult) Alert {
 	}
 
 	return Alert{
+		ID:        uuid.NewV7(),
 		Type:      AlertTypeFailure,
 		Target:    result.Target,
 		Result:    result,
@@ -81,6 +89,7 @@ func NewReminderAlert(result CheckResult) Alert {
 	}
 
 	return Alert{
+		ID:        uuid.NewV7(),
 		Type:      AlertTypeReminder,
 		Target:    result.Target,
 		Result:    result,
@@ -93,6 +102,7 @@ func NewReminderAlert(result CheckResult) Alert {
 // NewRecoveryAlert creates an alert for a recovered target.
 func NewRecoveryAlert(result CheckResult) Alert {
 	return Alert{
+		ID:        uuid.NewV7(),
 		Type:      AlertTypeRecovery,
 		Target:    result.Target,
 		Result:    result,

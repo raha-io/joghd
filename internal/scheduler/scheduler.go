@@ -142,10 +142,10 @@ func (s *Scheduler) send(ctx context.Context, target domain.Target, alert domain
 	defer cancel()
 
 	if err := s.alerter.Send(ctx, alert); err != nil {
-		slog.Error("Failed to send alert", "kind", kind, "target", target.Name, "error", err)
+		slog.Error("Failed to send alert", "kind", kind, "target", target.Name, "alert_id", alert.ID, "error", err)
 
 		return
 	}
 
-	slog.Log(ctx, level, "Sent alert", "kind", kind, "target", target.Name)
+	slog.Log(ctx, level, "Sent alert", "kind", kind, "target", target.Name, "alert_id", alert.ID)
 }

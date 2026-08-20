@@ -142,6 +142,6 @@ func buildMattermostAttachment(alert domain.Alert) mattermostAttachment {
 		Title:    title,
 		Text:     text,
 		Fields:   fields,
-		Footer:   alert.Timestamp.Format("2006-01-02 15:04:05 MST"),
+		Footer:   fmt.Sprintf("%s • %s", alert.Timestamp.Format("2006-01-02 15:04:05 MST"), alert.ID),
 	}
 }

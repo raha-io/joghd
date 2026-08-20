@@ -291,6 +291,6 @@ func sendAlert(ctx context.Context, alt alerter.Alerter, alert domain.Alert) {
 	defer cancel()
 
 	if err := alt.Send(ctx, alert); err != nil {
-		slog.Error("Failed to send alert", "target", alert.Target.Name, "error", err)
+		slog.Error("Failed to send alert", "target", alert.Target.Name, "alert_id", alert.ID, "error", err)
 	}
 }
