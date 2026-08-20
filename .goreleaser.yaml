@@ -57,7 +57,11 @@ nfpms:
     vendor: rahacloud
     homepage: https://github.com/rahacloud/joghd
     maintainer: Parham Alvani <parham.alvani@gmail.com>
-    description: URL health check service with Telegram alerts
+    description: |-
+      Self-hosted uptime monitoring and HTTP health checks with Telegram and
+      Mattermost alerts. Probes HTTP/HTTPS endpoints on a schedule, retries with
+      exponential backoff, and reports downtime and recovery to chat.
+    section: net
     license: GPL-3.0
     formats:
       - deb
@@ -84,6 +88,9 @@ dockers:
       - "--platform=linux/amd64"
       - "--label=org.opencontainers.image.source=https://github.com/rahacloud/joghd"
       - "--label=org.opencontainers.image.title={{.ProjectName}}"
+      - "--label=org.opencontainers.image.description=Self-hosted uptime monitoring and HTTP health checks with Telegram and Mattermost alerts"
+      - "--label=org.opencontainers.image.url=https://github.com/rahacloud/joghd"
+      - "--label=org.opencontainers.image.documentation=https://github.com/rahacloud/joghd#readme"
       - "--label=org.opencontainers.image.version={{.Version}}"
       - "--label=org.opencontainers.image.created={{.Date}}"
       - "--label=org.opencontainers.image.revision={{.FullCommit}}"
@@ -102,6 +109,9 @@ dockers:
       - "--platform=linux/arm64"
       - "--label=org.opencontainers.image.source=https://github.com/rahacloud/joghd"
       - "--label=org.opencontainers.image.title={{.ProjectName}}"
+      - "--label=org.opencontainers.image.description=Self-hosted uptime monitoring and HTTP health checks with Telegram and Mattermost alerts"
+      - "--label=org.opencontainers.image.url=https://github.com/rahacloud/joghd"
+      - "--label=org.opencontainers.image.documentation=https://github.com/rahacloud/joghd#readme"
       - "--label=org.opencontainers.image.version={{.Version}}"
       - "--label=org.opencontainers.image.created={{.Date}}"
       - "--label=org.opencontainers.image.revision={{.FullCommit}}"
