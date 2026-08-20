@@ -7,6 +7,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/rahacloud/joghd/internal/config"
@@ -140,7 +141,7 @@ func TestCheck(t *testing.T) {
 			client := &fakeClient{responses: tc.responses}
 			c := New(WithHTTPClient(client), WithRetryConfig(fastRetry(tc.maxAttempts)))
 
-			result := c.Check(context.Background(), target("api"))
+			result := c.Check(t.Context(), target("api"))
 
 			if result.Success != tc.wantSuccess {
 				t.Errorf("Success = %v, want %v (error: %v)", result.Success, tc.wantSuccess, result.Error)
@@ -162,51 +163,57 @@ func TestCheck(t *testing.T) {
 	}
 }
 
+// The bubble's clock is exact, so this asserts the backoff schedule itself
+// rather than an upper bound chosen to survive a loaded CI machine.
 func TestCheckBackoffIsBounded(t *testing.T) {
-	client := &fakeClient{responses: []response{{status: http.StatusBadGateway}}}
-	c := New(WithHTTPClient(client), WithRetryConfig(config.RetryConfig{
-		MaxAttempts: 4,
-		InitialWait: 10 * time.Millisecond,
-		MaxWait:     20 * time.Millisecond,
-		Multiplier:  10,
-	}))
+	synctest.Test(t, func(t *testing.T) {
+		client := &fakeClient{responses: []response{{status: http.StatusBadGateway}}}
+		c := New(WithHTTPClient(client), WithRetryConfig(config.RetryConfig{
+			MaxAttempts: 4,
+			InitialWait: 10 * time.Millisecond,
+			MaxWait:     20 * time.Millisecond,
+			Multiplier:  10,
+		}))
 
-	start := time.Now()
-	c.Check(context.Background(), target("api"))
-	elapsed := time.Since(start)
+		start := time.Now()
+		c.Check(t.Context(), target("api"))
+		elapsed := time.Since(start)
 
-	// Waits are 10ms, 20ms (capped), 20ms (capped) = 50ms, not 10+100+1000ms.
-	if elapsed > 300*time.Millisecond {
-		t.Errorf("total backoff %s exceeds the configured max_wait cap", elapsed)
-	}
+		// Waits are 10ms, 20ms (capped), 20ms (capped) = 50ms, not 10+100+1000ms.
+		const want = 50 * time.Millisecond
+		if elapsed != want {
+			t.Errorf("total backoff = %s, want exactly %s", elapsed, want)
+		}
+	})
 }
 
+// An hour-long backoff costs nothing inside a bubble: the clock jumps only
+// when every goroutine is blocked, so a wedged Check shows up as a bubble
+// deadlock instead of a wall-clock timeout the test has to guess at.
 func TestCheckStopsOnCancelledContext(t *testing.T) {
-	client := &fakeClient{responses: []response{{status: http.StatusBadGateway}}}
-	c := New(WithHTTPClient(client), WithRetryConfig(config.RetryConfig{
-		MaxAttempts: 5,
-		InitialWait: time.Hour,
-		MaxWait:     time.Hour,
-		Multiplier:  1,
-	}))
+	synctest.Test(t, func(t *testing.T) {
+		client := &fakeClient{responses: []response{{status: http.StatusBadGateway}}}
+		c := New(WithHTTPClient(client), WithRetryConfig(config.RetryConfig{
+			MaxAttempts: 5,
+			InitialWait: time.Hour,
+			MaxWait:     time.Hour,
+			Multiplier:  1,
+		}))
 
-	ctx, cancel := context.WithCancel(context.Background())
-	go func() {
-		time.Sleep(20 * time.Millisecond)
+		ctx, cancel := context.WithCancel(t.Context())
+
+		done := make(chan domain.CheckResult, 1)
+		go func() { done <- c.Check(ctx, target("api")) }()
+
+		// Let Check reach its first backoff, then pull the context out.
+		synctest.Sleep(20 * time.Millisecond)
 		cancel()
-	}()
 
-	done := make(chan domain.CheckResult, 1)
-	go func() { done <- c.Check(ctx, target("api")) }()
-
-	select {
-	case result := <-done:
+		result := <-done
 		if !errors.Is(result.Error, context.Canceled) {
 			t.Errorf("Error = %v, want context.Canceled", result.Error)
 		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("Check ignored context cancellation")
-	}
+	})
 }
 
 func TestCheckAllReturnsResultsInOrder(t *testing.T) {
@@ -215,7 +222,7 @@ func TestCheckAllReturnsResultsInOrder(t *testing.T) {
 
 	targets := []domain.Target{target("a"), target("b"), target("c")}
 
-	results := c.CheckAll(context.Background(), targets)
+	results := c.CheckAll(t.Context(), targets)
 
 	if len(results) != len(targets) {
 		t.Fatalf("got %d results, want %d", len(results), len(targets))
@@ -229,51 +236,49 @@ func TestCheckAllReturnsResultsInOrder(t *testing.T) {
 }
 
 func TestCheckAllRespectsConcurrencyLimit(t *testing.T) {
-	client := &fakeClient{responses: []response{{status: http.StatusOK}}, block: make(chan struct{})}
-	c := New(WithHTTPClient(client), WithRetryConfig(fastRetry(1)), WithConcurrency(2))
-
 	targets := make([]domain.Target, 10)
 	for i := range targets {
 		targets[i] = target("t")
 		targets[i].Name = string(rune('a' + i))
 	}
 
-	done := make(chan struct{})
-	go func() {
-		c.CheckAll(context.Background(), targets)
-		close(done)
-	}()
+	synctest.Test(t, func(t *testing.T) {
+		// The block channel has to be created inside the bubble: a goroutine
+		// parked on a channel from outside is not "durably blocked", so
+		// synctest.Wait would never return.
+		client := &fakeClient{responses: []response{{status: http.StatusOK}}, block: make(chan struct{})}
+		c := New(WithHTTPClient(client), WithRetryConfig(fastRetry(1)), WithConcurrency(2))
 
-	// Let the goroutines pile up against the semaphore, then release them.
-	time.Sleep(100 * time.Millisecond)
-	close(client.block)
+		done := make(chan struct{})
+		go func() {
+			c.CheckAll(t.Context(), targets)
+			close(done)
+		}()
 
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("CheckAll did not finish")
-	}
+		// Wait blocks until every other goroutine in the bubble is durably
+		// blocked, which is precisely "all ten have piled up against the
+		// semaphore". No sleep long enough to be safe and short enough to be
+		// quick has to be invented.
+		synctest.Wait()
 
-	if peak := client.maxSeen.Load(); peak > 2 {
-		t.Errorf("peak concurrent requests = %d, want at most 2", peak)
-	}
+		if peak := client.maxSeen.Load(); peak > 2 {
+			t.Errorf("peak concurrent requests = %d, want at most 2", peak)
+		}
+
+		close(client.block)
+		<-done
+	})
 }
 
 // A zero concurrency used to turn the semaphore into an unbuffered channel and
 // block CheckAll forever.
 func TestCheckAllWithNonPositiveConcurrency(t *testing.T) {
-	client := &fakeClient{responses: []response{{status: http.StatusOK}}}
-	c := New(WithHTTPClient(client), WithRetryConfig(fastRetry(1)), WithConcurrency(0))
+	// If CheckAll hangs, the bubble deadlocks and synctest.Test fails the
+	// test by itself.
+	synctest.Test(t, func(t *testing.T) {
+		client := &fakeClient{responses: []response{{status: http.StatusOK}}}
+		c := New(WithHTTPClient(client), WithRetryConfig(fastRetry(1)), WithConcurrency(0))
 
-	done := make(chan struct{})
-	go func() {
-		c.CheckAll(context.Background(), []domain.Target{target("a")})
-		close(done)
-	}()
-
-	select {
-	case <-done:
-	case <-time.After(2 * time.Second):
-		t.Fatal("CheckAll hung with concurrency = 0")
-	}
+		c.CheckAll(t.Context(), []domain.Target{target("a")})
+	})
 }

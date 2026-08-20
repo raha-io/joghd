@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/rahacloud/joghd/internal/config"
@@ -57,6 +58,7 @@ func (s *stubChecker) count() int {
 
 	return s.checks
 }
+
 
 // recordingAlerter captures the alert types it was asked to send.
 type recordingAlerter struct {
@@ -147,7 +149,7 @@ func TestCheckAndAlertTransitions(t *testing.T) {
 
 			// lastAlertTime is left at the zero value so no reminder is due.
 			state := targetState{status: tc.previous}
-			s.checkAndAlert(context.Background(), testTarget(), &state)
+			s.checkAndAlert(t.Context(), testTarget(), &state)
 
 			got := alt.types()
 			if len(got) != len(tc.wantAlert) {
@@ -194,7 +196,7 @@ func TestCheckAndAlertRemindersRespectMultiplier(t *testing.T) {
 				status:        domain.StatusUnhealthy,
 				lastAlertTime: time.Now().Add(-tc.sinceLastAlert),
 			}
-			s.checkAndAlert(context.Background(), target, &state)
+			s.checkAndAlert(t.Context(), target, &state)
 
 			got := alt.types()
 			if tc.wantReminder {
@@ -216,7 +218,7 @@ func TestRecoveryResetsReminderClock(t *testing.T) {
 	s := newScheduler(chk, alt, 1)
 
 	state := targetState{status: domain.StatusUnhealthy, lastAlertTime: time.Now().Add(-time.Hour)}
-	s.checkAndAlert(context.Background(), testTarget(), &state)
+	s.checkAndAlert(t.Context(), testTarget(), &state)
 
 	if !state.lastAlertTime.IsZero() {
 		t.Errorf("lastAlertTime = %v, want the zero value after recovery", state.lastAlertTime)
@@ -230,7 +232,7 @@ func TestAlertsAreSentWithADeadline(t *testing.T) {
 	s := newScheduler(chk, alt, 0)
 
 	state := targetState{status: domain.StatusHealthy}
-	s.checkAndAlert(context.Background(), testTarget(), &state)
+	s.checkAndAlert(t.Context(), testTarget(), &state)
 
 	if !alt.deadline {
 		t.Error("alert was sent with a context that has no deadline")
@@ -243,7 +245,7 @@ func TestSendSurvivesAlerterErrors(t *testing.T) {
 	s := newScheduler(chk, alt, 0)
 
 	state := targetState{status: domain.StatusHealthy}
-	s.checkAndAlert(context.Background(), testTarget(), &state)
+	s.checkAndAlert(t.Context(), testTarget(), &state)
 
 	if state.status != domain.StatusUnhealthy {
 		t.Errorf("state.status = %v, want unhealthy even when alerting failed", state.status)
@@ -266,9 +268,9 @@ func TestTargetsSharingAURLDoNotInterfere(t *testing.T) {
 	stateA := targetState{status: domain.StatusUnknown}
 	stateB := targetState{status: domain.StatusUnknown}
 
-	s.checkAndAlert(context.Background(), first, &stateA)
+	s.checkAndAlert(t.Context(), first, &stateA)
 	chk.setSuccess(true)
-	s.checkAndAlert(context.Background(), second, &stateB)
+	s.checkAndAlert(t.Context(), second, &stateB)
 
 	if stateA.status != domain.StatusUnhealthy {
 		t.Errorf("first target status = %v, want unhealthy", stateA.status)
@@ -285,29 +287,29 @@ func TestTargetsSharingAURLDoNotInterfere(t *testing.T) {
 }
 
 func TestStartStopsOnContextCancellation(t *testing.T) {
-	chk := &stubChecker{success: true}
-	alt := &recordingAlerter{}
-	s := newScheduler(chk, alt, 0)
+	synctest.Test(t, func(t *testing.T) {
+		chk := &stubChecker{success: true}
+		alt := &recordingAlerter{}
+		s := newScheduler(chk, alt, 0)
 
-	ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(t.Context())
 
-	done := make(chan error, 1)
-	go func() { done <- s.Start(ctx) }()
+		done := make(chan error, 1)
+		go func() { done <- s.Start(ctx) }()
 
-	// Let the loop tick a few times before shutting it down.
-	time.Sleep(60 * time.Millisecond)
-	cancel()
+		// Six intervals of fake time, so the loop must have ticked repeatedly
+		// even at the upper end of the jitter range.
+		synctest.Sleep(6 * testTarget().Interval)
+		cancel()
 
-	select {
-	case err := <-done:
-		if err != nil {
+		// A Start that ignores cancellation deadlocks the bubble, which fails
+		// the test without a timeout having to be guessed at.
+		if err := <-done; err != nil {
 			t.Errorf("Start returned %v, want nil", err)
 		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("Start did not return after cancellation")
-	}
 
-	if chk.count() < 2 {
-		t.Errorf("performed %d checks, expected the ticker to fire repeatedly", chk.count())
-	}
+		if chk.count() < 2 {
+			t.Errorf("performed %d checks, expected the loop to fire repeatedly", chk.count())
+		}
+	})
 }

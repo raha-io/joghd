@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/rahacloud/joghd/internal/config"
@@ -20,16 +21,34 @@ func jsonServer(t *testing.T, handler http.HandlerFunc) (*httptest.Server, *atom
 
 	var conns atomic.Int64
 
-	srv := httptest.NewUnstartedServer(handler)
+	// NewTestServer hands back a server that is configurable until first use
+	// and shuts itself down via t.Cleanup, so there is no Close to forget.
+	// Start opts into the loopback network, which these tests need because
+	// NewRestyClient dials with its own transport.
+	srv := httptest.NewTestServer(t, handler)
 	srv.Config.ConnState = func(_ net.Conn, state http.ConnState) {
 		if state == http.StateNew {
 			conns.Add(1)
 		}
 	}
 	srv.Start()
-	t.Cleanup(srv.Close)
 
 	return srv, &conns
+}
+
+// inMemoryServer wires a RestyClient to a server on httptest's in-memory
+// network. No sockets and no real timers are involved, which is what lets the
+// caller run inside a synctest bubble.
+func inMemoryServer(t *testing.T, cfg config.HTTPConfig, handler http.HandlerFunc) (*httptest.Server, *RestyClient) {
+	t.Helper()
+
+	srv := httptest.NewTestServer(t, handler)
+
+	client := NewRestyClient(cfg)
+	client.client.SetTransport(srv.Client().Transport)
+	t.Cleanup(func() { _ = client.Close() })
+
+	return srv, client
 }
 
 func okJSONHandler(w http.ResponseWriter, _ *http.Request) {
@@ -47,7 +66,7 @@ func TestRestyClientReusesConnections(t *testing.T) {
 
 	const checks = 20
 	for range checks {
-		status, _, err := client.Execute(context.Background(), http.MethodGet, srv.URL, nil, 5*time.Second)
+		status, _, err := client.Execute(t.Context(), http.MethodGet, srv.URL, nil, 5*time.Second)
 		if err != nil {
 			t.Fatalf("Execute: %v", err)
 		}
@@ -63,8 +82,8 @@ func TestRestyClientReusesConnections(t *testing.T) {
 
 // The per-request timeout must not cost the client its TLS configuration.
 func TestRestyClientSkipTLSVerification(t *testing.T) {
-	srv := httptest.NewTLSServer(http.HandlerFunc(okJSONHandler))
-	t.Cleanup(srv.Close)
+	srv := httptest.NewTestServer(t, http.HandlerFunc(okJSONHandler))
+	srv.StartTLS()
 
 	client := NewRestyClient(config.HTTPConfig{
 		Timeout:             5 * time.Second,
@@ -75,7 +94,7 @@ func TestRestyClientSkipTLSVerification(t *testing.T) {
 
 	// A per-target timeout is always set in practice, so this is the path
 	// production takes.
-	status, _, err := client.Execute(context.Background(), http.MethodGet, srv.URL, nil, 5*time.Second)
+	status, _, err := client.Execute(t.Context(), http.MethodGet, srv.URL, nil, 5*time.Second)
 	if err != nil {
 		t.Fatalf("with per-target timeout: %v", err)
 	}
@@ -83,31 +102,34 @@ func TestRestyClientSkipTLSVerification(t *testing.T) {
 		t.Errorf("status = %d, want %d", status, http.StatusOK)
 	}
 
-	if _, _, err := client.Execute(context.Background(), http.MethodGet, srv.URL, nil, 0); err != nil {
+	if _, _, err := client.Execute(t.Context(), http.MethodGet, srv.URL, nil, 0); err != nil {
 		t.Errorf("without per-target timeout: %v", err)
 	}
 }
 
+// On a fake clock the per-request timeout can be asserted to the nanosecond
+// instead of being bounded by a threshold picked to survive a slow CI runner.
 func TestRestyClientPerRequestTimeout(t *testing.T) {
-	srv, _ := jsonServer(t, func(w http.ResponseWriter, r *http.Request) {
-		select {
-		case <-time.After(2 * time.Second):
-			okJSONHandler(w, r)
-		case <-r.Context().Done():
+	synctest.Test(t, func(t *testing.T) {
+		srv, client := inMemoryServer(t, config.HTTPConfig{Timeout: time.Minute, UserAgent: "Joghd/test"},
+			func(w http.ResponseWriter, r *http.Request) {
+				select {
+				case <-time.After(2 * time.Second):
+					okJSONHandler(w, r)
+				case <-r.Context().Done():
+				}
+			})
+
+		start := time.Now()
+		if _, _, err := client.Execute(t.Context(), http.MethodGet, srv.URL, nil, 100*time.Millisecond); err == nil {
+			t.Fatal("expected a timeout error, got nil")
+		}
+
+		const want = 100 * time.Millisecond
+		if elapsed := time.Since(start); elapsed != want {
+			t.Errorf("took %s, want exactly %s; the per-request timeout was not applied", elapsed, want)
 		}
 	})
-
-	client := NewRestyClient(config.HTTPConfig{Timeout: time.Minute, UserAgent: "Joghd/test"})
-	t.Cleanup(func() { _ = client.Close() })
-
-	start := time.Now()
-	if _, _, err := client.Execute(context.Background(), http.MethodGet, srv.URL, nil, 100*time.Millisecond); err == nil {
-		t.Fatal("expected a timeout error, got nil")
-	}
-
-	if elapsed := time.Since(start); elapsed > time.Second {
-		t.Errorf("took %s; the per-request timeout was not applied", elapsed)
-	}
 }
 
 func TestRestyClientSendsHeaders(t *testing.T) {
@@ -122,7 +144,7 @@ func TestRestyClientSendsHeaders(t *testing.T) {
 	client := NewRestyClient(config.HTTPConfig{Timeout: 5 * time.Second, UserAgent: "Joghd/test"})
 	t.Cleanup(func() { _ = client.Close() })
 
-	if _, _, err := client.Execute(context.Background(), http.MethodGet, srv.URL,
+	if _, _, err := client.Execute(t.Context(), http.MethodGet, srv.URL,
 		map[string]string{"Authorization": "Bearer token"}, 5*time.Second); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
@@ -136,20 +158,26 @@ func TestRestyClientSendsHeaders(t *testing.T) {
 }
 
 func TestRestyClientContextCancellation(t *testing.T) {
-	srv, _ := jsonServer(t, func(w http.ResponseWriter, r *http.Request) {
-		<-r.Context().Done()
-	})
+	synctest.Test(t, func(t *testing.T) {
+		srv, client := inMemoryServer(t, config.HTTPConfig{Timeout: time.Minute, UserAgent: "Joghd/test"},
+			func(_ http.ResponseWriter, r *http.Request) {
+				<-r.Context().Done()
+			})
 
-	client := NewRestyClient(config.HTTPConfig{Timeout: time.Minute, UserAgent: "Joghd/test"})
-	t.Cleanup(func() { _ = client.Close() })
+		ctx, cancel := context.WithCancel(t.Context())
 
-	ctx, cancel := context.WithCancel(context.Background())
-	go func() {
-		time.Sleep(50 * time.Millisecond)
+		errc := make(chan error, 1)
+		go func() {
+			_, _, err := client.Execute(ctx, http.MethodGet, srv.URL, nil, time.Minute)
+			errc <- err
+		}()
+
+		// Let the request reach the handler and park there, then cancel.
+		synctest.Sleep(50 * time.Millisecond)
 		cancel()
-	}()
 
-	if _, _, err := client.Execute(ctx, http.MethodGet, srv.URL, nil, time.Minute); err == nil {
-		t.Error("expected an error after cancellation, got nil")
-	}
+		if err := <-errc; err == nil {
+			t.Error("expected an error after cancellation, got nil")
+		}
+	})
 }
